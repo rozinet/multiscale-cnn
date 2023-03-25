@@ -12,28 +12,30 @@ from utils import load_data, get_multiscale_lengths
 
 # Inputs downscale/donwsample module
 from input_processor import downsample_guided, downsample_nl_means, downsample_wavelet, downsample_bilateral, \
-    downsample_gaussian, downsample_mean, downsample_subsampling
+    downsample_gaussian, downsample_mean, downsample_subsampling, \
+    gaussian_pyramids, get_original
 
 # Multiscale features block
 from multiscale_feature_blocks import base_model, multiscale_block_different_filters, multiscale_block_different_pooling, multiscale_block_dilated_convolution, \
     multiscale_block_depthwise_convolution, multiscale_block_inception_convolution, multiscale_block_deeper_network, \
-    multiscale_block_residual_connections, multiscale_block_residual_connections_bottleneck_architecture, \
-    multiscale_block_pyramid_pooling,  parallel_pathway\
+    multiscale_block_residual_connections, multiscale_block_residual_connections_deeper, multiscale_block_residual_connections_bottleneck_architecture, \
+    multiscale_block_pyramid_pooling,  parallel_pathway, efficientnet, efficientnet_v2, \
+    multiscale_block_residual_connections_deeper2, build_efficientnet_v2, base_model_plus_block
 
 (X_train, y_train) = load_data('AbnormalHeartbeat_TRAIN.arff')
 (X_test, y_test) = load_data('AbnormalHeartbeat_TEST.arff')
 
-
 # it takes a time series as an input, performs 1-D convolution, and returns it as an output ready for concatenation
-def get_base_model(input_len, fsize, multiscale_func):
+def get_base_model(input_len, multiscale_func):
 
     # the input is a time series of length n and width 1
     input_seq = Input(shape=(input_len, 1))
 
-    if multiscale_func == base_model:
-        processed = base_model(input_seq, fsize)
+    if(multiscale_func == base_model):
+        processed = multiscale_func(input_seq)
     else:
         processed = multiscale_func(input_seq)
+        # processed = base_model(processed)
 
     # global-max-pooling
     processed = GlobalMaxPooling1D()(processed)
@@ -44,16 +46,15 @@ def get_base_model(input_len, fsize, multiscale_func):
     model = Model(inputs=input_seq, outputs=compressed)
     return model
 
-
 # this is the main model
 # it takes the original time series and its down-sampled versions as an input, and returns the result of classification as an output
-def main_model(inputs_lens: List[int], fsizes: List[int], multiscale_func):
+def main_model(inputs_lens: List[int], multiscale_func):
     # the inputs to the branches are the original time series, and its down-sampled versions
     inputs = []
     branches = []
     for i, input_len in enumerate(inputs_lens):
         inputs.append(Input(shape=(input_len, 1)))
-        base_net = get_base_model(input_len, fsizes[i], multiscale_func)
+        base_net = get_base_model(input_len, multiscale_func)
         base_out = base_net(inputs[-1])
         branches.append(base_out)
 
@@ -66,24 +67,31 @@ def main_model(inputs_lens: List[int], fsizes: List[int], multiscale_func):
 
 
 # the divisor of the size, 1 is mentioned for original size
-
 # multiscale_inputs_funcs = [downsample_guided, downsample_nl_means, downsample_wavelet, downsample_subsampling, downsample_bilateral,
-#                           downsample_gaussian, downsample_mean]
+#                            downsample_gaussian, downsample_mean]
 
-multiscale_inputs_funcs = [downsample_guided, downsample_nl_means, downsample_wavelet, downsample_subsampling, downsample_bilateral,
-                           downsample_gaussian, downsample_mean]
+multiscale_inputs_funcs = [downsample_subsampling, get_original, downsample_bilateral, downsample_mean, downsample_gaussian]
 
-multiscale_features_funcs = [base_model, multiscale_block_residual_connections_bottleneck_architecture, multiscale_block_residual_connections, multiscale_block_inception_convolution, multiscale_block_depthwise_convolution, multiscale_block_dilated_convolution, multiscale_block_different_filters]
+# multiscale_features_funcs_done = [base_model, multiscale_block_residual_connections_bottleneck_architecture,
+#                              multiscale_block_residual_connections, multiscale_block_inception_convolution, multiscale_block_depthwise_convolution,
+#                              multiscale_block_dilated_convolution, multiscale_block_different_filters]
 
-downsample_factors = [4, 2, 1] #, 6, 8]
-fsizes = [8, 16, 24]
+# multiscale_features_funcs = [multiscale_block_residual_connections, multiscale_block_deeper_network, parallel_pathway]
+
+multiscale_features_funcs = [multiscale_block_inception_convolution, base_model, multiscale_block_depthwise_convolution, multiscale_block_different_filters, multiscale_block_dilated_convolution, multiscale_block_residual_connections]
+
+# efficientnet, efficientnet_v2, multiscale_block_deeper_network, parallel_pathway
+
+downsample_factors = [8, 4, 2, 1]  #, 6, 8]
+
+#fsizes = [8, 16, 24]
 
 # Call each function in a loop
 results = []
-repetitions = 3
+repetitions = 10
 for input_func in multiscale_inputs_funcs:
     for multiscale_func in multiscale_features_funcs:
-        max_loss = 0
+        min_loss = 0
         max_accuracy = 0
         std_loss = 0
         std_accuracy = 0
@@ -98,7 +106,7 @@ for input_func in multiscale_inputs_funcs:
 
             inputs_lens = get_multiscale_lengths(input_train_x)
 
-            m = main_model(inputs_lens, fsizes, multiscale_func)
+            m = main_model(inputs_lens, multiscale_func)
             m.compile(loss='categorical_crossentropy', optimizer='adam', metrics=['accuracy'])
 
             # Define the early stopping callback
@@ -107,8 +115,8 @@ for input_func in multiscale_inputs_funcs:
             history = m.fit(input_train_x, y_train, validation_split=0.2, epochs=10000, callbacks=[early_stop])
 
             # plot metrics
-            #plt.plot(history.history['accuracy'])
-            #plt.show()
+            # plt.plot(history.history['accuracy'])
+            # plt.show()
 
             score = m.evaluate(input_test_x, y_test, verbose=0)
 
@@ -116,12 +124,12 @@ for input_func in multiscale_inputs_funcs:
             accuracy_list.append(score[1])
 
         # descriptive statistics
-        max_loss = max(loss_list)
+        min_loss = min(loss_list)
         max_accuracy = max(accuracy_list)
         std_loss = statistics.stdev(loss_list)
         std_accuracy = statistics.stdev(accuracy_list)
 
-        msg = input_func.__name__ + ' + ' + multiscale_func.__name__ + '  loss:' + str(max_loss) + ' accuracy: ' + str(max_accuracy)
+        msg = input_func.__name__ + ' + ' + multiscale_func.__name__ + '  loss:' + str(min_loss) + ' accuracy: ' + str(max_accuracy)
         print(msg)
         results.append(msg)
 

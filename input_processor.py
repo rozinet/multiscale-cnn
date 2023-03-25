@@ -9,6 +9,7 @@ from scipy.ndimage import gaussian_filter1d
 from cv2.ximgproc import createGuidedFilter
 from scipy.optimize import minimize
 from skimage.restoration import denoise_nl_means
+from scipy import ndimage
 
 def downsample_bilateral(x: pd.DataFrame, downsample_factors, kernel_size=5, sigma_color=75, sigma_space=75):
     downsampled_x = []
@@ -45,6 +46,11 @@ def downsample_bilateral(x: pd.DataFrame, downsample_factors, kernel_size=5, sig
 
     return downsampled_x
 
+def get_original(x: pd.DataFrame, downsample_factors):
+    origin_x = []
+    origin_x.append(x)
+    return origin_x
+
 def downsample_gaussian(x: pd.DataFrame, downsample_factors, sigma=1):
     downsampled_x = []
 
@@ -73,6 +79,43 @@ def downsample_gaussian(x: pd.DataFrame, downsample_factors, sigma=1):
         downsampled_x.append(downsampled)
 
     return downsampled_x
+def gaussian_pyramids(x: pd.DataFrame, downsample_factors):
+    """
+    Create Gaussian pyramids for each signal in the input DataFrame.
+
+    Args:
+        x (pd.DataFrame): The input ECG signals as a DataFrame.
+        downsample_factors (list): A list of downsample factors to be applied.
+
+    Returns:
+        (list): A list of DataFrames, each containing the downsampled signals.
+    """
+
+    def downsample_signal(signal, factor):
+        """
+        Downsample a given signal using Gaussian filtering and the specified downsample factor.
+
+        Args:
+            signal (np.array): The input signal as a NumPy array.
+            factor (int): The downsample factor.
+
+        Returns:
+            (np.array): The downsampled signal as a NumPy array.
+        """
+
+        sigma = factor / 2
+        filtered_signal = ndimage.gaussian_filter(signal, sigma=sigma)
+        downsampled_signal = filtered_signal[::factor]
+        return downsampled_signal
+
+    pyramid_list = []
+
+    for factor in downsample_factors:
+        downsampled_signals = x.apply(lambda row: downsample_signal(row.values, factor), axis=1)
+        downsampled_signals_df = pd.DataFrame(downsampled_signals.tolist(), columns=[f'x_{i}' for i in range(downsampled_signals.iloc[0].shape[0])])
+        pyramid_list.append(downsampled_signals_df)
+
+    return pyramid_list
 
 def downsample_mean(x: pd.DataFrame, downsample_factors):
     downsampled_x = []
